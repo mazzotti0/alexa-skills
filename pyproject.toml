@@ -1,0 +1,15 @@
+[project]
+name = "alexa-skills"
+version = "0.1.0"
+description = "Alexa skills backed by Modal serverless endpoints"
+requires-python = ">=3.11"
+dependencies = [
+    "ask-sdk-core>=1.19.0",
+    "google-genai>=1.0.0",
+    "fastapi>=0.115.0",
+    "modal>=0.66.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

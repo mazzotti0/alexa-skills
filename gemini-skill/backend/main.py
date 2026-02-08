@@ -12,29 +12,28 @@ Gemini model, which keeps round-trip time well within that window.
 
 from __future__ import annotations
 
-import json
 import os
-from typing import Any, Dict
+import sys
 
-import google.generativeai as genai
+from google import genai
 import modal
 from fastapi import Request, Response
-from ask_sdk_core.skill_builder import SkillBuilder
-from ask_sdk_core.dispatch_components import (
-    AbstractRequestHandler,
-    AbstractExceptionHandler,
-)
+from ask_sdk_core.dispatch_components import AbstractRequestHandler
 from ask_sdk_core.handler_input import HandlerInput
-from ask_sdk_core.utils import is_request_type, is_intent_name
+from ask_sdk_core.utils import is_intent_name, is_request_type
 from ask_sdk_model import Response as AlexaResponse
 from ask_sdk_model.ui import SimpleCard
+
+# Ensure the repo root is on sys.path so `shared` is importable.
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+from shared.alexa_utils import build_skill, invoke_skill  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Modal app & image
 # ---------------------------------------------------------------------------
 image = modal.Image.debian_slim(python_version="3.11").pip_install(
     "ask-sdk-core",
-    "google-generativeai",
+    "google-genai",
     "fastapi",
 )
 
@@ -48,14 +47,16 @@ GEMINI_MODEL = "gemini-1.5-flash"
 
 def _ask_gemini(question: str) -> str:
     """Send *question* to Gemini and return the text response."""
-    genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-    model = genai.GenerativeModel(GEMINI_MODEL)
-    response = model.generate_content(question)
+    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+    response = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=question,
+    )
     return response.text
 
 
 # ---------------------------------------------------------------------------
-# Alexa request handlers
+# Skill-specific Alexa request handlers
 # ---------------------------------------------------------------------------
 class LaunchRequestHandler(AbstractRequestHandler):
     """Handles the LaunchRequest (when the user says 'Alexa, open gemini')."""
@@ -121,60 +122,16 @@ class HelpIntentHandler(AbstractRequestHandler):
         )
 
 
-class CancelAndStopIntentHandler(AbstractRequestHandler):
-    """Handles AMAZON.CancelIntent and AMAZON.StopIntent."""
-
-    def can_handle(self, handler_input: HandlerInput) -> bool:
-        return is_intent_name("AMAZON.CancelIntent")(handler_input) or \
-               is_intent_name("AMAZON.StopIntent")(handler_input)
-
-    def handle(self, handler_input: HandlerInput) -> AlexaResponse:
-        return (
-            handler_input.response_builder
-            .speak("Goodbye!")
-            .set_should_end_session(True)
-            .response
-        )
-
-
-class SessionEndedRequestHandler(AbstractRequestHandler):
-    """Handles SessionEndedRequest."""
-
-    def can_handle(self, handler_input: HandlerInput) -> bool:
-        return is_request_type("SessionEndedRequest")(handler_input)
-
-    def handle(self, handler_input: HandlerInput) -> AlexaResponse:
-        return handler_input.response_builder.response
-
-
-class CatchAllExceptionHandler(AbstractExceptionHandler):
-    """Global exception handler – returns a friendly error to Alexa."""
-
-    def can_handle(self, handler_input: HandlerInput, exception: Exception) -> bool:
-        return True
-
-    def handle(self, handler_input: HandlerInput, exception: Exception) -> AlexaResponse:
-        speech = "Sorry, something went wrong. Please try again later."
-        return (
-            handler_input.response_builder
-            .speak(speech)
-            .set_should_end_session(True)
-            .response
-        )
-
-
 # ---------------------------------------------------------------------------
-# Skill builder
+# Build skill (common handlers are added automatically by build_skill)
 # ---------------------------------------------------------------------------
-sb = SkillBuilder()
-sb.add_request_handler(LaunchRequestHandler())
-sb.add_request_handler(GeminiQueryIntentHandler())
-sb.add_request_handler(HelpIntentHandler())
-sb.add_request_handler(CancelAndStopIntentHandler())
-sb.add_request_handler(SessionEndedRequestHandler())
-sb.add_exception_handler(CatchAllExceptionHandler())
-
-skill = sb.create()
+skill = build_skill(
+    request_handlers=[
+        LaunchRequestHandler(),
+        GeminiQueryIntentHandler(),
+        HelpIntentHandler(),
+    ],
+)
 
 
 # ---------------------------------------------------------------------------
@@ -185,9 +142,4 @@ skill = sb.create()
 async def alexa_handler(request: Request) -> Response:
     """Receive an Alexa request, process it through the skill, and return
     the raw JSON envelope that Alexa expects."""
-    body: Dict[str, Any] = await request.json()
-    alexa_response = skill.invoke(body, None)
-    return Response(
-        content=json.dumps(alexa_response),
-        media_type="application/json",
-    )
+    return await invoke_skill(skill, request)
